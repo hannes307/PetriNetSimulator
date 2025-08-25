@@ -90,9 +90,14 @@ app = FastAPI(title="Petri API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # allow your Pages site; regex covers any user/org pages just in case
+    allow_origins=["https://hannes307.github.io"],
+    allow_origin_regex=r"^https://([a-z0-9-]+\.)?github\.io$",
+    allow_methods=["*"],        # allow POST, OPTIONS, etc.
+    allow_headers=["*"],        # allow Content-Type, etc.
+    expose_headers=[],          # keep default
+    allow_credentials=False,    # leave False unless you use cookies
+    max_age=600,                # cache preflight 10 minutes
 )
 
 @app.get("/health")
