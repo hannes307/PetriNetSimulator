@@ -90,14 +90,18 @@ app = FastAPI(title="Petri API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    # allow your Pages site; regex covers any user/org pages just in case
-    allow_origins=["https://hannes307.github.io"],
-    allow_origin_regex=r"^https://([a-z0-9-]+\.)?github\.io$",
-    allow_methods=["*"],        # allow POST, OPTIONS, etc.
-    allow_headers=["*"],        # allow Content-Type, etc.
-    expose_headers=[],          # keep default
-    allow_credentials=False,    # leave False unless you use cookies
-    max_age=600,                # cache preflight 10 minutes
+    # Allow local dev + GitHub Pages + your Koyeb URL
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://hannes307.github.io",
+        # include your deployed API host only if you call it from another site
+        # "https://soviet-alicia-technischeuniversitaetwien-8e8e7575.koyeb.app",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+    max_age=600,
 )
 
 @app.get("/health")
