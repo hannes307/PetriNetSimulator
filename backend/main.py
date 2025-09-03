@@ -104,6 +104,10 @@ app.add_middleware(
     max_age=600,
 )
 
+@app.get("/")
+def root():
+    return {"ok": True, "message": "FastAPI on Hugging Face Spaces is alive."}
+
 @app.get("/health")
 def health(): return {"status": "ok"}
 
