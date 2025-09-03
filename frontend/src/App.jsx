@@ -112,6 +112,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [connectFrom, setConnectFrom] = useState(null) // Shift+click source
   const [showLabels, setShowLabels] = useState(true)   // toggle label visibility
+  const [toast, setToast] = useState('')               // small success/fail popups
 
   // --- History recorder ---
   // step: { fired: string|null, tokens: Record<placeId,number>, ts:number }
@@ -288,6 +289,23 @@ export default function App() {
       .map(tr => tr.id)
   }, [])
 
+  /* === enabled set from an arbitrary stored marking (for history coloring) === */
+  const enabledAtTokens = useCallback((tokens) => {
+    const nodeById = Object.fromEntries(nodes.map(n => [n.id, n.type]))
+    const inArcs = {}
+    edges.forEach(e => {
+      if (nodeById[e.target] === 'transition') {
+        ;(inArcs[e.target] ||= []).push(e)
+      }
+    })
+    return nodes
+      .filter(n => n.type === 'transition')
+      .filter(tr => (inArcs[tr.id] || []).every(a =>
+        (tokens[a.source] ?? 0) >= (a.data?.weight ?? 1)
+      ))
+      .map(tr => tr.id)
+  }, [nodes, edges])
+
   /* ---------- Simulation ---------- */
   const showEnabled = async () => {
     setEnabled(computeEnabled(nodes, edges)) // instant local
@@ -320,7 +338,7 @@ export default function App() {
     setHistory(prev => {
       const idx = hIndexRef.current
       const head = idx >= 0 ? prev.slice(0, idx + 1) : []
-      return [...head, newStep]
+      return [...head, newStep] // truncate tail -> branch from current
     })
     setHIndex(idx => idx + 1)
   }, [])
@@ -347,19 +365,14 @@ export default function App() {
   const stepFirst = () => goTo(0)
   const stepLast = () => goTo(history.length - 1)
 
-  // --- Fire (records when history has been initialized) ---
+  // --- Fire (records; CONTINUES FROM CURRENT STEP WITHOUT JUMPING TO LAST) ---
   const fire = async (tid) => {
     if (isFiring) return
     setIsFiring(true)
     setError('')
     try {
-      // Initialize history if "Run"/"Step" is used for the first time
+      // Initialize history if first time
       ensureHistoryInit()
-
-      // If user rewound, jump to latest before producing new steps
-      if (hIndexRef.current < history.length - 1) {
-        stepLast()
-      }
 
       const res = await fetch(`${API}/simulate/fire`, {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -370,7 +383,7 @@ export default function App() {
 
       const tokens = Object.fromEntries(data.net.places.map(p => [p.id, p.tokens ?? 0]))
 
-      // Apply tokens and recompute enabled; record step
+      // Apply tokens and recompute enabled; record step branching from current
       setNodes(ns => {
         const updated = ns.map(n =>
           isP(n) ? { ...n, data:{ ...n.data, tokens: tokens[n.id] ?? 0 } } : n
@@ -387,7 +400,7 @@ export default function App() {
     }
   }
 
-  /* ---------- Auto-run loop (records automatically) ---------- */
+  /* ---------- Auto-run loop (continues from current step; branches naturally) ---------- */
   useEffect(() => {
     if (!autoRun || mode !== 'simulation') return
     let cancelled = false
@@ -397,11 +410,6 @@ export default function App() {
       if (cancelled) return
       // Initialize recording if needed
       ensureHistoryInit()
-
-      // If rewound, jump to last before continuing to run
-      if (hIndexRef.current < history.length - 1) {
-        stepLast()
-      }
 
       const localEnabled = computeEnabled(nodes, edges)
       if (localEnabled.length === 0) {
@@ -422,12 +430,12 @@ export default function App() {
     const g = new dagre.graphlib.Graph()
     g.setGraph({ rankdir: dir })
     g.setDefaultEdgeLabel(() => ({}))
-    nodes.forEach(n => g.setNode(n.id, { width: isP(n)?64:16, height: isP(n)?64:76 }))
+    nodes.forEach(n => g.setNode(n.id, { width: isP(n)?64:16, height: isP(n)?64:64 }))
     edges.forEach(e => g.setEdge(e.source, e.target))
     dagre.layout(g)
     setNodes(ns => ns.map(n => {
       const pos = g.node(n.id); if (!pos) return n
-      const dx = isP(n) ? 32 : 8, dy = isP(n) ? 32 : 38
+      const dx = isP(n) ? 32 : 8, dy = isP(n) ? 32 : 32
       return { ...n, position: { x: pos.x - dx, y: pos.y - dy } }
     }))
   }
@@ -490,12 +498,13 @@ ${arcsXml ? '\n      ' + arcsXml.replace(/\n/g, '\n      ') : ''}
       const blob = new Blob([pnml], { type: 'application/xml' })
       const a = document.createElement('a')
       const ts = new Date().toISOString().replace(/[:.]/g, '-')
-      a.href = URL.createObjectURL(blob)
+      const url = URL.createObjectURL(blob)
+      a.href = url
       a.download = `petri-net-${ts}.pnml`
       document.body.appendChild(a)
       a.click()
       a.remove()
-      URL.revokeObjectURL(a.href)
+      URL.revokeObjectURL(url)
     } catch (e) {
       setError('Export PNML failed: ' + (e?.message || String(e)))
     }
@@ -573,6 +582,206 @@ ${arcsXml ? '\n      ' + arcsXml.replace(/\n/g, '\n      ') : ''}
   }
 
   const onImportPNMLClick = () => pnmlRef.current?.click()
+
+const buildTikZ = (opts = {}) => {
+  const {
+    fullDocument = true,
+    scale = 40,
+    includeLabels = true,
+    curvySingles = true,
+  } = opts
+
+  const escTex = (s='') => String(s).replace(/([%$&#_^{}])/g, '\\$1')
+  const net = toNet()
+
+  const allNodes = [...net.places, ...net.transitions]
+  let minX = 0, minY = 0
+  if (allNodes.length) {
+    minX = Math.min(...allNodes.map(n => Number.isFinite(n.x) ? n.x : 0))
+    minY = Math.min(...allNodes.map(n => Number.isFinite(n.y) ? n.y : 0))
+  }
+  const toCm = (px) => Math.round(((px) / scale) * 100) / 100
+  const getCoord = (n) => {
+    const x = toCm((n.x ?? 0) - minX)
+    const y = toCm(-((n.y ?? 0) - minY))
+    return { x, y }
+  }
+
+  const idToPos = new Map()
+  net.places.forEach(p => idToPos.set(p.id, getCoord(p)))
+  net.transitions.forEach(t => idToPos.set(t.id, getCoord(t)))
+
+  // Dot positions (in cm) relative to node center (<=6 => dots; else count)
+  const tokenOffsets = (k) => {
+    switch (Math.max(0, k|0)) {
+      case 0:  return []
+      case 1:  return [[0,0]]
+      case 2:  return [[-0.22,0],[0.22,0]]
+      case 3:  return [[-0.24,-0.14],[0.24,-0.14],[0,0.22]]
+      case 4:  return [[-0.24,-0.24],[0.24,-0.24],[-0.24,0.24],[0.24,0.24]]
+      case 5:  return [[-0.24,-0.24],[0.24,-0.24],[0,0],[-0.24,0.24],[0.24,0.24]]
+      default: return [[-0.30,-0.18],[0,-0.18],[0.30,-0.18],[-0.30,0.18],[0,0.18],[0.30,0.18]]
+    }
+  }
+
+  const placeLines = net.places.map(p => {
+    const label = (p.label ?? '').trim()
+    const labelPart = (includeLabels && label) ? `, label=above:{${escTex(label)}}` : ''
+    const {x,y} = idToPos.get(p.id) || {x:0,y:0}
+    return `\\node[place${labelPart}] (${escTex(p.id)}) at (${x},${y}) {};`
+  }).join('\n')
+
+  const transLines = net.transitions.map(t => {
+    const label = (t.label ?? '').trim()
+    const labelPart = (includeLabels && label) ? `, label=above:{${escTex(label)}}` : ''
+    const {x,y} = idToPos.get(t.id) || {x:0,y:0}
+    return `\\node[transition${labelPart}] (${escTex(t.id)}) at (${x},${y}) {};`
+  }).join('\n')
+
+  // Tokens WITHOUT calc lib (use xshift/yshift)
+  const tokenLines = net.places.map(p => {
+    const k = Math.max(0, p.tokens|0)
+    if (k === 0) return ''
+    const id = escTex(p.id)
+    const offs = tokenOffsets(k)
+    if (k <= 6) {
+      return offs.map(([dx,dy]) =>
+        `\\node[tokenDot] at ([xshift=${dx}cm,yshift=${dy}cm] ${id}) {};`
+      ).join('\n')
+    }
+    return `\\node[tokenCount] at (${id}) {${k}};`
+  }).filter(Boolean).join('\n')
+
+  // Arc geometry: curved, parallel fan-out, self-loops
+  const keyUndir = (a) => [a.src, a.dst].sort().join('|')
+  const hasOppMap = new Map()
+  const dirCounts = new Map()
+  net.arcs.forEach(a => {
+    const und = keyUndir(a)
+    hasOppMap.set(und, (hasOppMap.get(und) || new Set()).add(a.src < a.dst ? 'fwd' : 'rev'))
+    const dirKey = `${a.src}->${a.dst}`
+    dirCounts.set(dirKey, (dirCounts.get(dirKey) || 0) + 1)
+  })
+  const hasOpposite = (a) => {
+    const s = hasOppMap.get(keyUndir(a))
+    return s && s.size === 2
+  }
+  const dirIndex = new Map()
+  const sideSign = (a) => (a.src < a.dst ? +1 : -1)
+  const curveMag = (idx) => 10 + idx * 8
+
+  const arcAngles = (a) => {
+    const sp = idToPos.get(a.src) || {x:0,y:0}
+    const tp = idToPos.get(a.dst) || {x:0,y:0}
+    const theta = Math.atan2((tp.y - sp.y), (tp.x - sp.x)) * 180 / Math.PI
+    const dirKey = `${a.src}->${a.dst}`
+    const idx = dirIndex.get(dirKey) || 0
+    dirIndex.set(dirKey, idx + 1)
+    const count = dirCounts.get(dirKey) || 1
+    let sign = 0, mag = 0
+    if (hasOpposite(a)) { sign = sideSign(a); mag = curveMag(idx) }
+    else if (count > 1) { sign = +1; mag = curveMag(idx) }
+    else { if (curvySingles) { sign = +1; mag = 12 } }
+    const phi = sign * mag
+    return { out: theta + phi, inn: theta + 180 - phi }
+  }
+
+  const selfLoopAngles = (idx) => {
+    const presets = [
+      { out: 60,  inn: 120, loose: 10 },
+      { out:-60,  inn:-120, loose: 10 },
+      { out: 30,  inn: 150, loose: 12 },
+      { out:-30,  inn:-150, loose: 12 },
+    ]
+    return presets[idx % presets.length]
+  }
+  const selfCounts = new Map()
+
+  const arcLines = net.arcs.map(a => {
+    if (a.src === a.dst) {
+      const idx = selfCounts.get(a.src) || 0
+      selfCounts.set(a.src, idx + 1)
+      const { out, inn, loose } = selfLoopAngles(idx)
+      const w = a.weight ?? 1
+      const wLabel = w !== 1 ? ` node[pos=0.5, above]{${w}}` : ''
+      return `\\draw[arc, looseness=${loose}, out=${out}, in=${inn}] (${escTex(a.src)}) to${wLabel} (${escTex(a.dst)});`
+    } else {
+      const { out, inn } = arcAngles(a)
+      const w = a.weight ?? 1
+      const wLabel = w !== 1 ? ` node[midway, sloped, above]{${w}}` : ''
+      return `\\draw[arc, out=${out.toFixed(1)}, in=${inn.toFixed(1)}] (${escTex(a.src)}) to${wLabel} (${escTex(a.dst)});`
+    }
+  }).join('\n')
+
+  const tikzBody = `% Generated by PetriNetPro — curved arcs, self-loops, dot tokens (no calc lib)
+% 1cm ≈ ${scale} px from the canvas
+\\begin{tikzpicture}[
+  >=Stealth,
+  bend angle=20,
+  place/.style={circle, draw, thick, minimum size=12mm, inner sep=0, align=center},
+  transition/.style={rectangle, draw, thick, minimum width=4mm, minimum height=12mm, inner sep=0},
+  arc/.style={->, semithick, shorten >=3pt, shorten <=3pt},
+  tokenDot/.style={circle, fill=black, inner sep=1.4pt},
+  tokenCount/.style={font=\\footnotesize}
+]
+  % Nodes
+${placeLines ? '  ' + placeLines.replace(/\n/g, '\n  ') : ''}
+${transLines ? '\n  ' + transLines.replace(/\n/g, '\n  ') : ''}
+
+  % Tokens
+${tokenLines ? '  ' + tokenLines.replace(/\n/g, '\n  ') : ''}
+
+  % Arcs
+${arcLines ? '  ' + arcLines.replace(/\n/g, '\n  ') : ''}
+\\end{tikzpicture}
+`
+
+  if (!fullDocument) return tikzBody
+
+  return `\\documentclass[tikz,border=10pt]{standalone}
+\\usepackage{tikz}
+\\usetikzlibrary{arrows.meta,positioning}
+${tikzBody}`
+}
+
+  // Download as .tex
+  const exportTikZ = (opts = {}) => {
+    const doc = buildTikZ(opts)
+    const blob = new Blob([doc], { type: 'application/x-tex' })
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().replace(/[:.]/g, '-')
+    const url = URL.createObjectURL(blob)
+    a.href = url
+    a.download = `petri-net-${ts}.tex`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  // Copy to clipboard (uses HTTPS Clipboard API; falls back to execCommand)
+  const copyTikZ = async (opts = {}) => {
+    const text = buildTikZ({ fullDocument: false, ...opts })
+    try {
+      await navigator.clipboard.writeText(text)
+      setToast('TikZ copied to clipboard ✓')
+      setTimeout(() => setToast(''), 1400)
+    } catch {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'; ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.focus(); ta.select()
+        document.execCommand('copy')
+        ta.remove()
+        setToast('TikZ copied to clipboard ✓')
+        setTimeout(() => setToast(''), 1400)
+      } catch (e2) {
+        setError('Copy failed: ' + (e2?.message || 'unknown error'))
+      }
+    }
+  }
 
   /* ---------- Shift+click to connect (P<->T) ---------- */
   const handleNodeClick = (nodeId, e) => {
@@ -715,10 +924,12 @@ ${arcsXml ? '\n      ' + arcsXml.replace(/\n/g, '\n      ') : ''}
           />
         </div>
 
-        {/* 8) Import / Export PNML */}
+        {/* 8) Import / Export PNML + Export/Copy LaTeX */}
         <div className="group">
           <button className="button" onClick={() => pnmlRef.current?.click()}>Import PNML</button>
           <button className="button" onClick={exportPNML}>Export PNML</button>
+          <button className="button" onClick={() => exportTikZ({ fullDocument: true })}>Export LaTeX (TikZ)</button>
+          <button className="button" onClick={() => copyTikZ({})}>Copy LaTeX (TikZ)</button>
           <input
             ref={pnmlRef}
             type="file"
@@ -729,6 +940,7 @@ ${arcsXml ? '\n      ' + arcsXml.replace(/\n/g, '\n      ') : ''}
         </div>
 
         {error && <span className="error" role="alert" style={{ marginLeft: 12 }}>⚠ {error}</span>}
+        {toast && <span className="toast" role="status">{toast}</span>}
       </div>
 
       <div className="canvas">
@@ -762,7 +974,7 @@ ${arcsXml ? '\n      ' + arcsXml.replace(/\n/g, '\n      ') : ''}
           <p className="label">
             Add nodes. Drag from any handle or use <kbd>Shift</kbd>+click (source, then target) to connect.
             In Simulation, use <strong>Run</strong> to record steps automatically, or <strong>Step</strong> for one tick.
-            Click steps in History to rewind/forward.
+            Click steps in History to rewind/branch—new steps will continue from the selected point.
           </p>
         )}
 
@@ -831,27 +1043,44 @@ ${arcsXml ? '\n      ' + arcsXml.replace(/\n/g, '\n      ') : ''}
                 <button className="button" onClick={stepLast} disabled={hIndex >= history.length - 1}>Last ⏭</button>
                 <button className="button danger" onClick={clearHistory}>Clear</button>
               </div>
+
+              {/* Legend */}
+              <div className="label" style={{ marginTop:6, opacity:0.8 }}>
+                Steps highlighted indicate multiple next transitions were enabled (an alternative could have fired).
+              </div>
+
               <div style={{ maxHeight: 180, overflow:'auto', marginTop:8, border:'1px solid var(--line,#ddd)', borderRadius:8, padding:8 }}>
-                {history.map((st, i) => (
-                  <div
-                    key={i}
-                    onClick={() => goTo(i)}
-                    style={{
-                      display:'flex', justifyContent:'space-between', alignItems:'center',
-                      padding:'6px 8px', cursor:'pointer',
-                      background: i===hIndex ? 'rgba(0,0,0,0.06)' : 'transparent',
-                      borderRadius:6
-                    }}
-                    title={st.fired ? `Fired ${st.fired}` : 'Initial'}
-                  >
-                    <div style={{ fontFamily:'monospace' }}>
-                      {i===0 ? 'Init' : `Fire ${st.fired}`}
+                {history.map((st, i) => {
+                  const enabledHere = enabledAtTokens(st.tokens)
+                  const hasAlternatives = enabledHere.length > 1
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => goTo(i)}
+                      style={{
+                        display:'flex',
+                        justifyContent:'space-between',
+                        alignItems:'center',
+                        padding:'6px 8px',
+                        cursor:'pointer',
+                        borderRadius:6,
+                        background: i===hIndex
+                          ? 'rgba(0,0,0,0.06)'
+                          : (hasAlternatives ? 'rgba(255, 215, 0, 0.18)' : 'transparent'),
+                        border: hasAlternatives ? '1px solid rgba(255, 191, 0, 0.6)' : '1px solid transparent'
+                      }}
+                      title={st.fired ? `Fired ${st.fired}` : 'Initial'}
+                    >
+                      <div style={{ fontFamily:'monospace' }}>
+                        {i===0 ? 'Init' : `Fire ${st.fired}`}
+                        {hasAlternatives && <span style={{ marginLeft:8, fontSize:12, opacity:0.8 }}>(choices: {enabledHere.join(', ')})</span>}
+                      </div>
+                      <div style={{ fontSize:12, opacity:0.7 }}>
+                        {new Date(st.ts).toLocaleTimeString()}
+                      </div>
                     </div>
-                    <div style={{ fontSize:12, opacity:0.7 }}>
-                      {new Date(st.ts).toLocaleTimeString()}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </>
           )}
