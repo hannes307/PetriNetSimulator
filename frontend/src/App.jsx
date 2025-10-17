@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
 import {
   ReactFlow, MiniMap, Controls, Background, addEdge,
-  useNodesState, useEdgesState, Handle, Position
+  useNodesState, useEdgesState, Handle, Position, MarkerType
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './global.css'
@@ -114,6 +114,9 @@ export default function App() {
   const [showLabels, setShowLabels] = useState(true)   // toggle label visibility
   const [toast, setToast] = useState('')               // small success/fail popups
 
+  // default edge options: always show arrowheads
+  const defaultEdgeOptions = { markerEnd: { type: MarkerType.ArrowClosed } }
+
   // --- History recorder ---
   // step: { fired: string|null, tokens: Record<placeId,number>, ts:number }
   const [history, setHistory] = useState([])
@@ -147,7 +150,7 @@ export default function App() {
     const ok = (isP(s) && isT(t)) || (isT(s) && isP(t))
     if (!ok) return
     setEdges(eds => addEdge(
-      { ...params, label:'1', data:{ weight:1 }, markerEnd:{ type:'arrowclosed' } },
+      { ...params, label:'1', data:{ weight:1 }, markerEnd:{ type: MarkerType.ArrowClosed } },
       eds
     ))
     clearHistory()
@@ -260,7 +263,7 @@ export default function App() {
       id:a.id, source:a.src, target:a.dst,
       label:String(a.weight ?? 1),
       data:{ weight:a.weight ?? 1 },
-      markerEnd:{ type:'arrowclosed' }
+      markerEnd:{ type: MarkerType.ArrowClosed }
     }))
 
     setNodes(ns); setEdges(es); setSelectedId(null); setSelectedIds([])
@@ -823,7 +826,7 @@ ${tikzBody}`
       target: nodeId,
       label: '1',
       data: { weight: 1 },
-      markerEnd: { type: 'arrowclosed' }
+      markerEnd: { type: MarkerType.ArrowClosed }
     }, eds))
     setConnectFrom(null)
     clearHistory()
@@ -954,6 +957,7 @@ ${tikzBody}`
             onConnect={onConnect}
             onSelectionChange={onSelectionChange}
             nodeTypes={nodeTypes}
+            defaultEdgeOptions={defaultEdgeOptions}
             fitView
             fitViewOptions={{ padding: 0.2 }}
             snapToGrid
