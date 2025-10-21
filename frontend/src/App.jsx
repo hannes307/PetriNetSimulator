@@ -6,6 +6,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import './global.css'
 import dagre from 'dagre'
+import AnalysisPanel from './components/AnalysisPanel'   // ← NEW
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -113,6 +114,7 @@ export default function App() {
   const [connectFrom, setConnectFrom] = useState(null) // Shift+click source
   const [showLabels, setShowLabels] = useState(true)   // toggle label visibility
   const [toast, setToast] = useState('')               // small success/fail popups
+  const [showAnalysis, setShowAnalysis] = useState(false) // ← NEW
 
   // default edge options: always show arrowheads
   const defaultEdgeOptions = { markerEnd: { type: MarkerType.ArrowClosed } }
@@ -236,6 +238,11 @@ export default function App() {
     const arcs = edges.map((e,i) => ({ id:e.id || `A${i+1}`, src:e.source, dst:e.target, weight:e.data?.weight ?? 1 }))
     return { places, transitions, arcs }
   }
+
+  // Helpers to pass to AnalysisPanel
+  const getNet = () => toNet()
+  const getMarking = () =>
+    Object.fromEntries(nodes.filter(isP).map(p => [p.id, p.data?.tokens ?? 0]))
 
   const normalizeCounter = (items, prefix, current) => {
     const maxNum = items.reduce((m, it) => {
@@ -942,6 +949,11 @@ ${tikzBody}`
           />
         </div>
 
+        {/* 9) Analyze (opens panel) */}
+        <div className="group">
+          <button className="button" onClick={() => setShowAnalysis(true)}>Analyze</button>
+        </div>
+
         {error && <span className="error" role="alert" style={{ marginLeft: 12 }}>⚠ {error}</span>}
         {toast && <span className="toast" role="status">{toast}</span>}
       </div>
@@ -1090,6 +1102,17 @@ ${tikzBody}`
           )}
         </div>
       </div>
+
+      {/* ===== Analysis Panel (modal) ===== */}
+      {showAnalysis && (
+        <AnalysisPanel
+          apiBase={API}
+          net={getNet()}
+          marking={getMarking()}
+          enabledLocal={computeEnabled(nodes, edges)}
+          onClose={() => setShowAnalysis(false)}
+        />
+      )}
     </div>
   )
 }
