@@ -6,9 +6,14 @@ import {
 import '@xyflow/react/dist/style.css'
 import './global.css'
 import dagre from 'dagre'
-import AnalysisPanel from './components/AnalysisPanel'   // ← NEW
+import AnalysisPanel from './components/AnalysisPanel'   
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API =
+  import.meta.env.VITE_API_URL ||
+  (window.location.hostname === 'localhost'
+    ? 'http://localhost:8000' // local dev
+    : 'https://des2-petrinetsimulator.hf.space'); // actual Space URL
+
 
 /* ====== Visualization ====== */
 const DOT_LIMIT = 6
