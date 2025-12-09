@@ -1,9 +1,10 @@
 # PetriNetBuilder
 
+---
 PetriNetBuilder is a browser-based tool for creating, simulating, and analysing Place/Transition Petri Nets.  
 This project was developed as part of a bachelor’s thesis at the Faculty of Informatics, Technical University of Vienna.
 For inquiries please contact: handas705@gmail.com
----
+
 
 ## Features
 
@@ -37,7 +38,7 @@ PetriNetBuilder can be accessed via browser:
 
 The full source code can be found under:
 
-- 📦 **Source code:** `https://github.com/hannes307/PetriNetSimulator`
+-  **Source code:** `https://github.com/hannes307/PetriNetSimulator`
 
 ---
 
